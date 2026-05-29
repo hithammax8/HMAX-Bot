@@ -1,24 +1,25 @@
-import os
 import telebot
 from telebot import types
 from flask import Flask
 from threading import Thread
-from dotenv import load_dotenv
 
-# تحميل البيانات من متغيرات البيئة
-load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+# 1. الإعدادات المباشرة
+TOKEN = "8621204418:AAHkLlUefZTY8JaY4rFain_qqniwzBWRAmU"
+CHANNEL_ID = "@haithamMax1"
 bot = telebot.TeleBot(TOKEN)
 
-# إبقاء البوت حياً على Render
+# 2. تشغيل سيرفر ويب ليبقى البوت "مستيقظاً" على Render
 app = Flask(__name__)
 @app.route('/')
-def home(): return "HMAX System is alive!"
-def run_web(): app.run(host='0.0.0.0', port=8080)
+def home():
+    return "HMAX System is running 24/7!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
+
 Thread(target=run_web).start()
 
-# قاعدة البيانات (ضع بياناتك هنا)
+# 3. قاعدة البيانات
 DATA = {
     "tools": {
         "tsm_pro": ("⚙️ TSM Tool Pro", "https://www.mediafire.com/file/vqh1h1uhwq9s2xo/TSM_SetupV2.4.1.7z/file"),
@@ -34,18 +35,16 @@ DATA = {
     }
 }
 
-def is_subscribed(user_id):
-    try:
-        member = bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except: return False
-
+# 4. دوال البوت
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("📦 قسم الأدوات", callback_data="main_tools"),
-               types.InlineKeyboardButton("💾 قسم التعاريف", callback_data="main_drivers"))
-    bot.send_message(message.chat.id, "👑 مرحباً بك في HMAX Global System", reply_markup=markup)
+    markup.add(
+        types.InlineKeyboardButton("📦 قسم الأدوات", callback_data="main_tools"),
+        types.InlineKeyboardButton("💾 قسم التعاريف", callback_data="main_drivers"),
+        types.InlineKeyboardButton("📢 قناة الأخبار", url="https://t.me/haithamMax1")
+    )
+    bot.send_message(message.chat.id, "👑 مرحباً بك في HMAX Global System\nنظام صيانة متكامل بين يديك.", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -53,10 +52,15 @@ def callback_query(call):
         markup = types.InlineKeyboardMarkup(row_width=1)
         for k, v in DATA["tools"].items(): markup.add(types.InlineKeyboardButton(v[0], callback_data=f"link_{k}"))
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ اختر الأداة:", reply_markup=markup)
+    elif call.data == "main_drivers":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for k, v in DATA["drivers"].items(): markup.add(types.InlineKeyboardButton(v[0], callback_data=f"link_{k}"))
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="💾 اختر التعريف:", reply_markup=markup)
     elif call.data.startswith("link_"):
         key = call.data.replace("link_", "")
         link = DATA["tools"].get(key, DATA["drivers"].get(key))[1]
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"✅ الرابط:\n{link}")
+        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="main_tools" if key in DATA["tools"] else "main_drivers"))
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"✅ الرابط المباشر:\n{link}", reply_markup=markup)
 
 print("HMAX System is running...")
 bot.infinity_polling()
