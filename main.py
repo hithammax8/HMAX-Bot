@@ -12,7 +12,7 @@ from telebot import types
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 
-CHANNEL_USERNAME = "@yourchannel"
+CHANNEL_USERNAME = "@hmaxpro"
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
