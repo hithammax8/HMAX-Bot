@@ -1,1 +1,0 @@
-# HMAX PRO BOT
