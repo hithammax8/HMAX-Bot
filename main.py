@@ -9,10 +9,10 @@ MY_CHAT_ID = "560330933"
 CHANNEL_ID = "@haithamMax1"
 bot = telebot.TeleBot(TOKEN)
 
-# نظام إحصائيات داخلي (لا ينهار إذا أعيد تشغيل البوت)
-stats = {"users": 0, "clicks": 0}
+# نظام إحصائيات داخلي
+stats = {"users": 0, "clicks": 0, "requests": 0, "blocked": 0}
 
-# تشغيل سيرفر الويب
+# تشغيل سيرفر الويب ليبقى البوت حياً
 app = Flask(__name__)
 @app.route('/')
 def home(): return "HMAX System is running!"
@@ -30,7 +30,10 @@ DATA = {
     "drivers": {
         "adb": ("Adb Driver", "https://www.mediafire.com/file_premium/yx9pry29zxw0rsd/UniversalAdbDriverSetup.msi/file"),
         "mtk": ("MTK Driver", "https://www.mediafire.com/file_premium/0psu8awm57or6jj/drivers_mtk_v2.0.1.1_2.7z/file"),
-        "samsung": ("Samsung All USB", "https://www.mediafire.com/file_premium/92yzwgkkvkutye5/SAMSUNG_USB_Driver_for_Mobile_Phones_3.exe/file")
+        "samsung": ("Samsung All USB", "https://www.mediafire.com/file_premium/92yzwgkkvkutye5/SAMSUNG_USB_Driver_for_Mobile_Phones_3.exe/file"),
+        "fastboot": ("FASTBOOT DRIVER", "https://mega.nz/file/w0plHSKZ#TjvkWuc9OmOpQiJq7Nr0U-ANlPVyf7RP1-2KvcgaSO4"),
+        "exynos": ("Exynos driver", "https://mega.nz/file/ksYGmJ6T#_7DeakMDKI9lPkGIvUA0TIN9qHGCUtSrDfTDAump3WU"),
+        "adb_fix": ("حل مشكلة ADB", "https://mega.nz/file/UgZwSCRS#rgIJ8Wdli6yG_m6V7aWzJZmrVLIfHTrzQWZUhvU6Ums")
     }
 }
 
@@ -46,6 +49,7 @@ def start(message):
         types.InlineKeyboardButton("📦 قسم الأدوات", callback_data="main_tools"),
         types.InlineKeyboardButton("💾 قسم التعاريف", callback_data="main_drivers"),
         types.InlineKeyboardButton("📝 طلب أداة", callback_data="req_tool"),
+        types.InlineKeyboardButton("📢 قناة الأخبار", url="https://t.me/haithamMax1"),
         types.InlineKeyboardButton("📱 واتساب", url="https://wa.me/967772773388"),
         types.InlineKeyboardButton("👨‍💻 تواصل معي", url="https://t.me/hithamMax")
     )
@@ -54,7 +58,15 @@ def start(message):
 @bot.message_handler(commands=['dashboard'])
 def dashboard(message):
     if str(message.chat.id) == MY_CHAT_ID:
-        bot.reply_to(message, f"📊 **إحصائيات النظام:**\n👥 المستخدمون: {stats['users']}\n🖱️ عدد النقرات: {stats['clicks']}")
+        text = (
+            "📊 **لوحة تحكم إدارة السيرفر المتقدمة**\n\n"
+            f"👥 إجمالي المستخدمين: {stats['users']}\n"
+            f"🖱️ عدد النقرات الكلي: {stats['clicks']}\n"
+            f"📝 عدد الطلبات المرسلة: {stats['requests']}\n"
+            f"🚫 عدد المحظورين: {stats['blocked']}\n\n"
+            "✅ النظام يعمل بكفاءة."
+        )
+        bot.reply_to(message, text)
     else:
         bot.reply_to(message, "❌ هذه الأوامر للإدارة فقط.")
 
@@ -64,19 +76,22 @@ def callback(call):
     if call.data == "back_start": start(call.message)
     elif call.data == "main_tools":
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("⚙️ TSM Tool Pro", callback_data="link_tsm_pro"),
-            types.InlineKeyboardButton("⚡ DFT Pro Tool", callback_data="link_dft_pro"),
-            types.InlineKeyboardButton("🔋 Sigma Plus (الخيارات)", callback_data="sigma_options"),
-            types.InlineKeyboardButton("🔓 UnlockTool", callback_data="link_unlock_tool"),
-            types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")
-        )
+        markup.add(types.InlineKeyboardButton("⚙️ TSM Tool Pro", callback_data="link_tsm_pro"),
+                   types.InlineKeyboardButton("⚡ DFT Pro Tool", callback_data="link_dft_pro"),
+                   types.InlineKeyboardButton("🔋 Sigma Plus (الخيارات)", callback_data="sigma_options"),
+                   types.InlineKeyboardButton("🔓 UnlockTool", callback_data="link_unlock_tool"),
+                   types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ اختر الأداة:", reply_markup=markup)
     elif call.data == "sigma_options":
         markup = types.InlineKeyboardMarkup(row_width=1)
         for k in ["sigma_main", "sigma_kirin", "sigma_exynos"]: markup.add(types.InlineKeyboardButton(DATA["tools"][k][0], callback_data=f"link_{k}"))
-        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="main_tools"))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع للأدوات", callback_data="main_tools"))
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="🔋 خيارات Sigma:", reply_markup=markup)
+    elif call.data == "main_drivers":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for k, v in DATA["drivers"].items(): markup.add(types.InlineKeyboardButton(v[0], callback_data=f"link_{k}"))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="💾 اختر التعريف:", reply_markup=markup)
     elif call.data.startswith("link_"):
         key = call.data.replace("link_", "")
         if is_subscribed(call.message.chat.id):
@@ -86,7 +101,13 @@ def callback(call):
             bot.answer_callback_query(call.id, "⚠️ اشترك في القناة أولاً!", show_alert=True)
     elif call.data == "req_tool":
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="📝 أرسل اسم الأداة:")
-        bot.register_next_step_handler(call.message, lambda msg: [bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد: {msg.text}"), bot.send_message(msg.chat.id, "✅ تم إرسال الطلب!"), start(msg)])
+        bot.register_next_step_handler(call.message, process_req)
+
+def process_req(message):
+    stats["requests"] += 1
+    bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد من {message.from_user.first_name}:\n{message.text}")
+    bot.send_message(message.chat.id, "✅ تم إرسال طلبك للإدارة بنجاح!")
+    start(message)
 
 print("System is running...")
 bot.infinity_polling()
