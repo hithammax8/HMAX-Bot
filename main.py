@@ -71,11 +71,10 @@ LAST_MESSAGE = {}
 def anti_spam(user_id):
     now = time.time()
     if user_id in LAST_MESSAGE:
-        if now - LAST_MESSAGE[user_id] < 1.5: # منع إرسال أكثر من رسالة خلال 1.5 ثانية
+        if now - LAST_MESSAGE[user_id] < 1.5: # منع إرسال أكثر من رسالة خلال 1.5 ثانية (حماية من الحسابات الوهمية والسبام)
             return False
     LAST_MESSAGE[user_id] = now
     
-    # تنظيف الذاكرة المؤقتة لمنع استهلاك الرام
     if len(LAST_MESSAGE) > 1000:
         LAST_MESSAGE.clear()
         LAST_MESSAGE[user_id] = now
@@ -90,7 +89,7 @@ def is_fake_user(user):
 
 def check_sub(user_id):
     if CHANNEL_USERNAME == "@yourchannel" or not CHANNEL_USERNAME:
-        return True # تخطي الفحص إذا لم يتم تعيين القناة
+        return True
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ["member", "administrator", "creator"]
@@ -122,7 +121,6 @@ def start(message):
     if not anti_spam(user_id):
         return
 
-    # معالجة نظام الإحالة قبل التحقق من الاشتراك لتجنب ضياع النقاط
     ref = 0
     if len(message.text.split()) > 1:
         data = message.text.split()[1]
@@ -150,10 +148,16 @@ def start(message):
     if not check_sub(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 اشترك بالقناة لتفعيل البوت", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}"))
-        bot.send_message(message.chat.id, "⚠️ <b>عذراً، يجب الاشتراك في قناة السيرفر الرسمية أولاً لتتمكن من استخدام البوت.</b>\n\nاضغط على الزر بالأسفل ثم أرسل /start مجدداً.", reply_markup=markup)
+        bot.send_message(message.chat.id, "⚠️ <b>عذراً، يجب الاشتراك في القناة أولاً لتتمكن من استخدام البوت.</b>\n\nاضغط على الزر بالأسفل ثم أرسل /start مجدداً.", reply_markup=markup)
         return
 
     markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # === إضافة زر لوحة التحكم للمدير فقط في الأعلى ===
+    if user_id == ADMIN_CHAT_ID:
+        markup.add(types.InlineKeyboardButton("⚙️ لوحة تحكم الإدارة", callback_data="admin_dashboard"))
+
+    # الأزرار العادية للمستخدمين
     markup.add(
         types.InlineKeyboardButton("📦 الأدوات", callback_data="tools"),
         types.InlineKeyboardButton("📝 طلب أداة", callback_data="request_tool"),
@@ -166,12 +170,14 @@ def start(message):
 # ================= CALLBACKS =================
 @bot.callback_query_handler(func=lambda c: True)
 def callbacks(call):
+    # ================= أزرار المستخدمين =================
     if call.data == "tools":
         markup = types.InlineKeyboardMarkup(row_width=1)
         for key, item in DATA["tools"].items():
             markup.add(types.InlineKeyboardButton(item[0], url=item[1]))
             count_click(item[0])
 
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         bot.edit_message_text("📦 <b>أدوات الصيانة المتاحة:</b>", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif call.data == "mypoints":
@@ -189,63 +195,57 @@ def callbacks(call):
         msg = bot.send_message(call.message.chat.id, "📝 <b>أرسل اسم الأداة أو الخدمة المطلوبة الآن:</b>")
         bot.register_next_step_handler(msg, save_request)
 
-# ================= REQUESTS =================
-def save_request(message):
-    today = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("INSERT INTO requests(user_id, text, req_date) VALUES (?, ?, ?)", (message.from_user.id, message.text, today))
-    conn.commit()
+    elif call.data == "back_to_main":
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        if call.from_user.id == ADMIN_CHAT_ID:
+            markup.add(types.InlineKeyboardButton("⚙️ لوحة تحكم الإدارة", callback_data="admin_dashboard"))
+        markup.add(
+            types.InlineKeyboardButton("📦 الأدوات", callback_data="tools"),
+            types.InlineKeyboardButton("📝 طلب أداة", callback_data="request_tool"),
+            types.InlineKeyboardButton("🎁 نقاطي", callback_data="mypoints"),
+            types.InlineKeyboardButton("👥 رابط الدعوة", callback_data="referral")
+        )
+        bot.edit_message_text("👑 <b>القائمة الرئيسية:</b>", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    if ADMIN_CHAT_ID != 0:
-        bot.send_message(ADMIN_CHAT_ID, f"📥 <b>طلب جديد من</b> <code>{message.from_user.id}</code>:\n\n{message.text}")
+    # ================= أزرار لوحة التحكم (المدير فقط) =================
+    elif call.data == "admin_dashboard":
+        if call.from_user.id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "❌ هذه الميزة للمدير فقط!", show_alert=True)
+            return
 
-    bot.reply_to(message, "✅ <b>تم إرسال طلبك للإدارة بنجاح.</b>")
+        today = datetime.now().strftime("%Y-%m-%d")
 
-# ================= DASHBOARD =================
-@bot.message_handler(commands=["dashboard", "admin"])
-def dashboard(message):
-    if message.from_user.id != ADMIN_CHAT_ID:
-        return
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
 
-    today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("SELECT COUNT(*) FROM users WHERE join_date=?", (today,))
+        today_users = cursor.fetchone()[0] or 0
 
-    # إحصائيات المستخدمين
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total_users = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COUNT(*) FROM requests")
+        total_requests = cursor.fetchone()[0] or 0
 
-    # عدد المشتركين اليوم
-    cursor.execute("SELECT COUNT(*) FROM users WHERE join_date=?", (today,))
-    today_users = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COUNT(*) FROM banned")
+        total_banned = cursor.fetchone()[0] or 0
 
-    # عدد الطلبات
-    cursor.execute("SELECT COUNT(*) FROM requests")
-    total_requests = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COUNT(*) FROM clicks")
+        total_clicks = cursor.fetchone()[0] or 0
 
-    # عدد المحظورين
-    cursor.execute("SELECT COUNT(*) FROM banned")
-    total_banned = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT joined_by, COUNT(*) as total FROM users WHERE joined_by != 0 GROUP BY joined_by ORDER BY total DESC LIMIT 1")
+        top_inviter_data = cursor.fetchone()
+        if top_inviter_data:
+            cursor.execute("SELECT name FROM users WHERE user_id=?", (top_inviter_data[0],))
+            inviter_name = cursor.fetchone()
+            inviter_name = inviter_name[0] if inviter_name else "مجهول"
+            inviter_text = f"👤 {inviter_name} (أحضر {top_inviter_data[1]} أعضاء)"
+        else:
+            inviter_text = "لا يوجد"
 
-    # عداد النقرات
-    cursor.execute("SELECT COUNT(*) FROM clicks")
-    total_clicks = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT tool, COUNT(*) as total FROM clicks GROUP BY tool ORDER BY total DESC LIMIT 1")
+        top_tool_data = cursor.fetchone()
+        tool_text = f"🔥 {top_tool_data[0]} ({top_tool_data[1]} نقرة)" if top_tool_data else "لا يوجد"
 
-    # أفضل شخص دعى أعضاء
-    cursor.execute("SELECT joined_by, COUNT(*) as total FROM users WHERE joined_by != 0 GROUP BY joined_by ORDER BY total DESC LIMIT 1")
-    top_inviter_data = cursor.fetchone()
-    if top_inviter_data:
-        cursor.execute("SELECT name FROM users WHERE user_id=?", (top_inviter_data[0],))
-        inviter_name = cursor.fetchone()
-        inviter_name = inviter_name[0] if inviter_name else "مجهول"
-        inviter_text = f"👤 {inviter_name} (أحضر {top_inviter_data[1]} أعضاء)"
-    else:
-        inviter_text = "لا يوجد"
-
-    # أكثر أداة استخداماً
-    cursor.execute("SELECT tool, COUNT(*) as total FROM clicks GROUP BY tool ORDER BY total DESC LIMIT 1")
-    top_tool_data = cursor.fetchone()
-    tool_text = f"🔥 {top_tool_data[0]} ({top_tool_data[1]} نقرة)" if top_tool_data else "لا يوجد"
-
-    text = f"""
-📊 <b>لوحة تحكم إدارة السيرفر (MaxTech)</b>
+        text = f"""
+📊 <b>لوحة تحكم إدارة السيرفر المتقدمة</b>
 
 👥 <b>إحصائيات المستخدمين:</b> {total_users}
 🆕 <b>عدد المشتركين اليوم:</b> {today_users}
@@ -259,47 +259,60 @@ def dashboard(message):
 🚫 <b>عدد المحظورين:</b> {total_banned}
 📈 <b>عداد النقرات الكلي:</b> {total_clicks}
 """
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("إرسال رسالة للكل", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("قائمة أفضل 10", callback_data="admin_top10")
-    )
-    bot.send_message(message.chat.id, text, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("admin_"))
-def admin_callbacks(call):
-    if call.from_user.id != ADMIN_CHAT_ID:
-        return
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📢 إرسال رسالة للكل", callback_data="admin_broadcast"),
+            types.InlineKeyboardButton("🏆 قائمة أفضل 10", callback_data="admin_top10")
+        )
+        markup.add(types.InlineKeyboardButton("🔙 العودة للقائمة", callback_data="back_to_main"))
         
-    if call.data == "admin_top10":
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "admin_top10":
+        if call.from_user.id != ADMIN_CHAT_ID:
+            return
         cursor.execute("SELECT name, points FROM users ORDER BY points DESC LIMIT 10")
         data = cursor.fetchall()
-        text = "🏆 <b>أفضل 10 مستخدمين:</b>\n\n"
+        text = "🏆 <b>أفضل 10 مستخدمين في البوت:</b>\n\n"
         for i, user in enumerate(data, start=1):
             text += f"{i}- {user[0]} | 🎁 {user[1]} نقطة\n"
         bot.send_message(call.message.chat.id, text)
         
     elif call.data == "admin_broadcast":
+        if call.from_user.id != ADMIN_CHAT_ID:
+            return
         msg = bot.send_message(call.message.chat.id, "📢 <b>أرسل الرسالة التي تريد إذاعتها لجميع المستخدمين:</b>")
         bot.register_next_step_handler(msg, process_broadcast)
 
+# ================= REQUESTS HANDLER =================
+def save_request(message):
+    today = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("INSERT INTO requests(user_id, text, req_date) VALUES (?, ?, ?)", (message.from_user.id, message.text, today))
+    conn.commit()
+
+    if ADMIN_CHAT_ID != 0:
+        bot.send_message(ADMIN_CHAT_ID, f"📥 <b>طلب جديد من</b> <code>{message.from_user.id}</code>:\n\n{message.text}")
+
+    bot.reply_to(message, "✅ <b>تم إرسال طلبك للإدارة بنجاح.</b>")
+
+# ================= BROADCAST HANDLER =================
 def process_broadcast(message):
     cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
     sent = 0
-    bot.send_message(message.chat.id, "⏳ <b>جاري الإرسال...</b>")
+    bot.send_message(message.chat.id, "⏳ <b>جاري الإرسال... الرجاء الانتظار</b>")
     for user in users:
         try:
             bot.send_message(user[0], message.text)
             sent += 1
-            time.sleep(0.05) # تجنب حظر تيليجرام (Flood Limit)
+            time.sleep(0.05) # حماية من الحظر بواسطة تيليجرام
         except:
             pass
-    bot.send_message(message.chat.id, f"✅ <b>تم الإرسال بنجاح إلى {sent} مستخدم.</b>")
+    bot.send_message(message.chat.id, f"✅ <b>اكتمل الإرسال! تم توصيل الرسالة إلى {sent} مستخدم.</b>")
 
 # ================= RUN SERVER & BOT =================
 if __name__ == "__main__":
-    bot.remove_webhook() # تنظيف الـ Webhook لتجنب تعارض الـ Polling في Render
+    bot.remove_webhook()
     Thread(target=run_web, daemon=True).start()
     logging.info("MaxTech Bot Started Successfully!")
     bot.infinity_polling(skip_pending=True)
