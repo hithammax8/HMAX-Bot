@@ -10,6 +10,7 @@ import os
 TOKEN = "8621204418:AAHkLlUefZTY8JaY4rFain_qqniwzBWRAmU"
 MY_CHAT_ID = "560330933"
 CHANNEL_ID = "@haithamMax1"
+CHANNEL_LINK = "https://t.me/haithamMax1"
 bot = telebot.TeleBot(TOKEN)
 
 # الحل الجذري لمشكلة 409 Conflict
@@ -36,7 +37,7 @@ def run_flask():
 
 Thread(target=run_flask).start()
 
-# البيانات المحدثة مع الروابط الصحيحة
+# البيانات المحدثة
 DATA = {
     "tools": {
         "tsm_pro": ("⚙️ TSM Tool Pro", "https://www.mediafire.com/file/vqh1h1uhwq9s2xo/TSM_SetupV2.4.1.7z/file"),
@@ -58,8 +59,11 @@ DATA = {
 }
 
 def is_subscribed(user_id):
-    try: return bot.get_chat_member(CHANNEL_ID, user_id).status in ["member", "administrator", "creator"]
-    except: return False
+    try:
+        status = bot.get_chat_member(CHANNEL_ID, user_id).status
+        return status in ["member", "administrator", "creator"]
+    except Exception:
+        return False
 
 def get_start_markup():
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -70,6 +74,14 @@ def get_start_markup():
         types.InlineKeyboardButton("💎 نظام النقاط", callback_data="points_sys"),
         types.InlineKeyboardButton("📱 واتساب", url="https://wa.me/967772773388"),
         types.InlineKeyboardButton("👨‍💻 تواصل معي", url="https://t.me/hithamMax")
+    )
+    return markup
+
+def get_subscription_markup():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("📢 اشترك في القناة", url=CHANNEL_LINK),
+        types.InlineKeyboardButton("✅ تم الاشتراك، استمرار", callback_data="back_start")
     )
     return markup
 
@@ -159,17 +171,18 @@ def callback(call):
     elif call.data.startswith("link_"):
         key = call.data.replace("link_", "")
         user_id = call.message.chat.id
-        cursor.execute("UPDATE users SET clicks = clicks + 1 WHERE id = ?", (user_id,))
-        tool_name = DATA["tools"].get(key, DATA["drivers"].get(key, (key,)))[0]
-        cursor.execute("INSERT INTO tool_usage (user_id, tool_name, timestamp) VALUES (?, ?, ?)", (user_id, tool_name, datetime.now().isoformat()))
-        conn.commit()
-
+        
         if is_subscribed(user_id):
+            cursor.execute("UPDATE users SET clicks = clicks + 1 WHERE id = ?", (user_id,))
+            tool_name = DATA["tools"].get(key, DATA["drivers"].get(key, (key,)))[0]
+            cursor.execute("INSERT INTO tool_usage (user_id, tool_name, timestamp) VALUES (?, ?, ?)", (user_id, tool_name, datetime.now().isoformat()))
+            conn.commit()
+            
             link = DATA["tools"].get(key, DATA["drivers"].get(key))[1]
             markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
             bot.edit_message_text(f"✅ الرابط:\n{link}", user_id, call.message.message_id, reply_markup=markup)
         else:
-            bot.answer_callback_query(call.id, "⚠️ اشترك في القناة أولاً!", show_alert=True)
+            bot.edit_message_text("⚠️ **عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من الوصول للروابط.**", call.message.chat.id, call.message.message_id, reply_markup=get_subscription_markup())
             
     elif call.data == "req_tool":
         bot.edit_message_text("📝 أرسل اسم الأداة:", call.message.chat.id, call.message.message_id)
