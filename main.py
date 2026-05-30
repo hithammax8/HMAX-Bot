@@ -3,6 +3,7 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 import sqlite3
+from datetime import datetime, timedelta
 
 # 1. الإعدادات
 TOKEN = "8621204418:AAHkLlUefZTY8JaY4rFain_qqniwzBWRAmU"
@@ -14,16 +15,20 @@ bot = telebot.TeleBot(TOKEN)
 bot.remove_webhook()
 
 # قاعدة بيانات متكاملة (sqlite)
-conn = sqlite3.connect('hmax_bot.db', check_same_thread=False)
+conn = sqlite3.connect("hmax_bot.db", check_same_thread=False)
 cursor = conn.cursor()
-cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, points INTEGER)')
+
+# تحديث هيكل جدول المستخدمين وإضافة جداول جديدة
+cursor.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0, invited_by INTEGER, join_date TEXT, last_active TEXT, is_banned INTEGER DEFAULT 0, clicks INTEGER DEFAULT 0)")
+cursor.execute("CREATE TABLE IF NOT EXISTS tool_usage (user_id INTEGER, tool_name TEXT, timestamp TEXT)")
+cursor.execute("CREATE TABLE IF NOT EXISTS requests (user_id INTEGER, request_text TEXT, timestamp TEXT)")
 conn.commit()
 
 # تشغيل سيرفر الويب
 app = Flask(__name__)
-@app.route('/')
+@app.route("/")
 def home(): return "HMAX System Active"
-Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
+Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 DATA = {
     "tools": {
@@ -45,14 +50,31 @@ DATA = {
 }
 
 def is_subscribed(user_id):
-    try: return bot.get_chat_member(CHANNEL_ID, user_id).status in ['member', 'administrator', 'creator']
+    try: return bot.get_chat_member(CHANNEL_ID, user_id).status in ["member", "administrator", "creator"]
     except: return False
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=["start"])
 def start(message):
     if message.from_user.is_bot: return
-    cursor.execute("INSERT OR IGNORE INTO users (id, points) VALUES (?, ?)", (message.chat.id, 0))
+    
+    # Handle referrals
+    referred_by = None
+    if message.text and len(message.text.split()) > 1:
+        try: referred_by = int(message.text.split()[1])
+        except ValueError: pass
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    # Check if user exists
+    cursor.execute("SELECT id FROM users WHERE id = ?", (message.chat.id,))
+    user_exists = cursor.fetchone()
+
+    if not user_exists:
+        cursor.execute("INSERT INTO users (id, invited_by, join_date, last_active) VALUES (?, ?, ?, ?)", (message.chat.id, referred_by, today, today))
+    else:
+        cursor.execute("UPDATE users SET last_active = ? WHERE id = ?", (today, message.chat.id))
     conn.commit()
+
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📦 قسم الأدوات", callback_data="main_tools"),
@@ -64,17 +86,106 @@ def start(message):
     )
     bot.send_message(message.chat.id, "👑 أهلاً بك في HMAX Global System.", reply_markup=markup)
 
-@bot.message_handler(commands=['dashboard'])
+@bot.message_handler(commands=["dashboard"])
 def dashboard(message):
     if str(message.chat.id) == MY_CHAT_ID:
+        # إحصائيات المستخدمين
         cursor.execute("SELECT COUNT(*) FROM users")
-        total = cursor.fetchone()[0]
-        bot.reply_to(message, f"📊 **لوحة الإدارة**\n👥 المستخدمين: {total}\n✅ النظام يعمل بكفاءة.")
+        total_users = cursor.fetchone()[0]
+
+        # عدد المشتركين اليوم (الذين انضموا اليوم)
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("SELECT COUNT(*) FROM users WHERE join_date = ?", (today,))
+        new_users_today = cursor.fetchone()[0]
+
+        # أفضل شخص دعى أعضاء
+        cursor.execute("SELECT invited_by, COUNT(*) AS referrals FROM users WHERE invited_by IS NOT NULL GROUP BY invited_by ORDER BY referrals DESC LIMIT 1")
+        top_referrer_data = cursor.fetchone()
+        top_referrer = f"لا يوجد بعد" if not top_referrer_data else f"المستخدم ID: {top_referrer_data[0]} ({top_referrer_data[1]} دعوات)"
+
+        # أكثر أداة استخداماً
+        cursor.execute("SELECT tool_name, COUNT(*) AS usage_count FROM tool_usage GROUP BY tool_name ORDER BY usage_count DESC LIMIT 1")
+        most_used_tool_data = cursor.fetchone()
+        most_used_tool = f"لا يوجد بعد" if not most_used_tool_data else f"{most_used_tool_data[0]} ({most_used_tool_data[1]} استخدام)"
+
+        # عدد الطلبات
+        cursor.execute("SELECT COUNT(*) FROM requests")
+        total_requests = cursor.fetchone()[0]
+
+        # عدد المحظورين
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
+        banned_users = cursor.fetchone()[0]
+
+        # عداد النقرات (إجمالي جميع النقرات على الروابط)
+        cursor.execute("SELECT SUM(clicks) FROM users")
+        total_clicks = cursor.fetchone()[0] or 0
+
+        dashboard_text = f"""
+📊 **لوحة الإدارة**
+
+👥 **إجمالي المستخدمين:** {total_users}
+🆕 **مشتركون جدد اليوم:** {new_users_today}
+🏆 **أفضل داعي:** {top_referrer}
+🛠️ **الأداة الأكثر استخداماً:** {most_used_tool}
+📝 **عدد الطلبات:** {total_requests}
+🚫 **عدد المحظورين:** {banned_users}
+🖱️ **إجمالي النقرات:** {total_clicks}
+
+✅ النظام يعمل بكفاءة.
+"""
+        bot.reply_to(message, dashboard_text)
+    else:
+        bot.reply_to(message, "❌ للإدارة فقط.")
+
+@bot.message_handler(commands=["ban"])
+def ban_user(message):
+    if str(message.chat.id) == MY_CHAT_ID:
+        try:
+            user_id_to_ban = int(message.text.split()[1])
+            cursor.execute("UPDATE users SET is_banned = 1 WHERE id = ?", (user_id_to_ban,))
+            conn.commit()
+            bot.reply_to(message, f"✅ تم حظر المستخدم {user_id_to_ban}.")
+        except (IndexError, ValueError):
+            bot.reply_to(message, "❌ يرجى تحديد معرف المستخدم للحظر. مثال: /ban 123456789")
+    else:
+        bot.reply_to(message, "❌ للإدارة فقط.")
+
+@bot.message_handler(commands=["unban"])
+def unban_user(message):
+    if str(message.chat.id) == MY_CHAT_ID:
+        try:
+            user_id_to_unban = int(message.text.split()[1])
+            cursor.execute("UPDATE users SET is_banned = 0 WHERE id = ?", (user_id_to_unban,))
+            conn.commit()
+            bot.reply_to(message, f"✅ تم إلغاء حظر المستخدم {user_id_to_unban}.")
+        except (IndexError, ValueError):
+            bot.reply_to(message, "❌ يرجى تحديد معرف المستخدم لإلغاء الحظر. مثال: /unban 123456789")
+    else:
+        bot.reply_to(message, "❌ للإدارة فقط.")
+
+@bot.message_handler(commands=["daily_new_users"])
+def daily_new_users(message):
+    if str(message.chat.id) == MY_CHAT_ID:
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("SELECT id FROM users WHERE join_date = ?", (today,))
+        new_users = cursor.fetchall()
+        if new_users:
+            user_ids = [str(user[0]) for user in new_users]
+            bot.reply_to(message, f"🆕 **المستخدمون الجدد اليوم ({today}):**\n{\n.join(user_ids)}")
+        else:
+            bot.reply_to(message, f"لا يوجد مستخدمون جدد اليوم ({today}).")
     else:
         bot.reply_to(message, "❌ للإدارة فقط.")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
+    # Check if user is banned
+    cursor.execute("SELECT is_banned FROM users WHERE id = ?", (call.message.chat.id,))
+    user_status = cursor.fetchone()
+    if user_status and user_status[0] == 1:
+        bot.answer_callback_query(call.id, "🚫 حسابك محظور ولا يمكنك استخدام البوت.", show_alert=True)
+        return
+
     if call.data == "back_start": start(call.message)
     elif call.data == "main_tools":
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -91,14 +202,31 @@ def callback(call):
         bot.edit_message_text(f"💎 نظام النقاط\nرابط دعوتك: {ref_link}", call.message.chat.id, call.message.message_id, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
     elif call.data.startswith("link_"):
         key = call.data.replace("link_", "")
-        if is_subscribed(call.message.chat.id):
+        user_id = call.message.chat.id
+
+        # Increment user clicks
+        cursor.execute("UPDATE users SET clicks = clicks + 1 WHERE id = ?", (user_id,))
+        conn.commit()
+
+        # Log tool usage
+        tool_name = DATA["tools"].get(key, (key,))[0] if key in DATA["tools"] else DATA["drivers"].get(key, (key,))[0]
+        cursor.execute("INSERT INTO tool_usage (user_id, tool_name, timestamp) VALUES (?, ?, ?)", (user_id, tool_name, datetime.now().isoformat()))
+        conn.commit()
+
+        if is_subscribed(user_id):
             link = DATA["tools"].get(key, DATA["drivers"].get(key))[1]
-            bot.edit_message_text(f"✅ الرابط:\n{link}", call.message.chat.id, call.message.message_id, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
+            bot.edit_message_text(f"✅ الرابط:\n{link}", user_id, call.message.message_id, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
         else:
             bot.answer_callback_query(call.id, "⚠️ اشترك في القناة أولاً!", show_alert=True)
     elif call.data == "req_tool":
         bot.edit_message_text("📝 أرسل اسم الأداة:", call.message.chat.id, call.message.message_id)
-        bot.register_next_step_handler(call.message, lambda m: [bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد: {m.text}"), bot.send_message(m.chat.id, "✅ تم إرسال الطلب!"), start(m)])
+        bot.register_next_step_handler(call.message, lambda m: [
+            cursor.execute("INSERT INTO requests (user_id, request_text, timestamp) VALUES (?, ?, ?)", (m.chat.id, m.text, datetime.now().isoformat())),
+            conn.commit(),
+            bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد: {m.text}"), 
+            bot.send_message(m.chat.id, "✅ تم إرسال الطلب!"), 
+            start(m)
+        ])
 
 print("System is running...")
 bot.infinity_polling()
