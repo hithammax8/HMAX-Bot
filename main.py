@@ -2,23 +2,29 @@ import telebot
 from telebot import types
 from flask import Flask
 from threading import Thread
+import sqlite3
 
-# 1. الإعدادات
 TOKEN = "8621204418:AAHkLlUefZTY8JaY4rFain_qqniwzBWRAmU"
 MY_CHAT_ID = "560330933"
 CHANNEL_ID = "@haithamMax1"
 bot = telebot.TeleBot(TOKEN)
 
-# نظام إحصائيات داخلي (مدمج)
-stats = {"users": 0, "clicks": 0, "requests": 0, "blocked": 0}
+# الحل الجذري للتعارض
+bot.remove_webhook()
 
-# تشغيل سيرفر الويب لضمان بقاء البوت حياً 24/7
+# قاعدة بيانات متكاملة
+conn = sqlite3.connect('hmax_bot.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, points INTEGER, inviter INTEGER)')
+cursor.execute('CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER)')
+conn.commit()
+
+# تشغيل الويب
 app = Flask(__name__)
 @app.route('/')
-def home(): return "HMAX System is running!"
+def home(): return "HMAX System Active"
 Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
 
-# قاعدة بيانات الأدوات والتعاريف
 DATA = {
     "tools": {
         "tsm_pro": ("⚙️ TSM Tool Pro", "https://www.mediafire.com/file/vqh1h1uhwq9s2xo/TSM_SetupV2.4.1.7z/file"),
@@ -38,20 +44,22 @@ DATA = {
     }
 }
 
-# دالة التحقق من الاشتراك
 def is_subscribed(user_id):
     try: return bot.get_chat_member(CHANNEL_ID, user_id).status in ['member', 'administrator', 'creator']
     except: return False
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    stats["users"] += 1
+    if message.from_user.is_bot: return
+    # تسجيل المستخدم
+    cursor.execute("INSERT OR IGNORE INTO users (id, points) VALUES (?, ?)", (message.chat.id, 0))
+    conn.commit()
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📦 قسم الأدوات", callback_data="main_tools"),
         types.InlineKeyboardButton("💾 قسم التعاريف", callback_data="main_drivers"),
         types.InlineKeyboardButton("📝 طلب أداة", callback_data="req_tool"),
-        types.InlineKeyboardButton("📢 قناة الأخبار", url="https://t.me/haithamMax1"),
+        types.InlineKeyboardButton("💎 نظام النقاط والدعوات", callback_data="points_sys"),
         types.InlineKeyboardButton("📱 واتساب", url="https://wa.me/967772773388"),
         types.InlineKeyboardButton("👨‍💻 تواصل معي", url="https://t.me/hithamMax")
     )
@@ -60,56 +68,48 @@ def start(message):
 @bot.message_handler(commands=['dashboard'])
 def dashboard(message):
     if str(message.chat.id) == MY_CHAT_ID:
-        text = (
-            "📊 **لوحة تحكم إدارة السيرفر المتقدمة**\n\n"
-            f"👥 إجمالي المستخدمين: {stats['users']}\n"
-            f"🖱️ عدد النقرات الكلي: {stats['clicks']}\n"
-            f"📝 عدد الطلبات المرسلة: {stats['requests']}\n"
-            f"🚫 عدد المحظورين: {stats['blocked']}\n\n"
-            "✅ النظام يعمل بكفاءة."
-        )
-        bot.reply_to(message, text)
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total = cursor.fetchone()[0]
+        bot.reply_to(message, f"📊 **لوحة الإدارة**\n👥 المستخدمين: {total}\n🚫 المحظورين: 0\n📝 الطلبات: جاري التحديث...")
     else:
-        bot.reply_to(message, "❌ هذه الأوامر للإدارة فقط.")
+        bot.reply_to(message, "❌ للإدارة فقط.")
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast(message):
+    if str(message.chat.id) == MY_CHAT_ID:
+        msg = message.text.replace("/broadcast ", "")
+        cursor.execute("SELECT id FROM users")
+        for u in cursor.fetchall():
+            try: bot.send_message(u[0], msg)
+            except: continue
+        bot.reply_to(message, "✅ تم الإرسال.")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-    stats["clicks"] += 1
     if call.data == "back_start": start(call.message)
     elif call.data == "main_tools":
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("⚙️ TSM Tool Pro", callback_data="link_tsm_pro"),
-                   types.InlineKeyboardButton("⚡ DFT Pro Tool", callback_data="link_dft_pro"),
-                   types.InlineKeyboardButton("🔋 Sigma Plus (الخيارات)", callback_data="sigma_options"),
-                   types.InlineKeyboardButton("🔓 UnlockTool", callback_data="link_unlock_tool"),
-                   types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ اختر الأداة:", reply_markup=markup)
-    elif call.data == "sigma_options":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for k in ["sigma_main", "sigma_kirin", "sigma_exynos"]: markup.add(types.InlineKeyboardButton(DATA["tools"][k][0], callback_data=f"link_{k}"))
-        markup.add(types.InlineKeyboardButton("🔙 رجوع للأدوات", callback_data="main_tools"))
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="🔋 خيارات Sigma:", reply_markup=markup)
+        for k in DATA["tools"]: markup.add(types.InlineKeyboardButton(DATA["tools"][k][0], callback_data=f"link_{k}"))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
+        bot.edit_message_text("⚙️ اختر الأداة:", call.message.chat.id, call.message.message_id, reply_markup=markup)
     elif call.data == "main_drivers":
         markup = types.InlineKeyboardMarkup(row_width=1)
-        for k, v in DATA["drivers"].items(): markup.add(types.InlineKeyboardButton(v[0], callback_data=f"link_{k}"))
+        for k in DATA["drivers"]: markup.add(types.InlineKeyboardButton(DATA["drivers"][k][0], callback_data=f"link_{k}"))
         markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start"))
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="💾 اختر التعريف:", reply_markup=markup)
+        bot.edit_message_text("💾 اختر التعريف:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    elif call.data == "points_sys":
+        ref_link = f"https://t.me/{(bot.get_me().username)}?start={call.message.chat.id}"
+        bot.edit_message_text(f"💎 نظام النقاط\nرابط دعوتك: {ref_link}\nنقاطك: 0", call.message.chat.id, call.message.message_id, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
     elif call.data.startswith("link_"):
         key = call.data.replace("link_", "")
         if is_subscribed(call.message.chat.id):
             link = DATA["tools"].get(key, DATA["drivers"].get(key))[1]
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"✅ الرابط:\n{link}", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
+            bot.edit_message_text(f"✅ الرابط: {link}", call.message.chat.id, call.message.message_id, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_start")))
         else:
             bot.answer_callback_query(call.id, "⚠️ اشترك في القناة أولاً!", show_alert=True)
     elif call.data == "req_tool":
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="📝 أرسل اسم الأداة:")
-        bot.register_next_step_handler(call.message, process_req)
-
-def process_req(message):
-    stats["requests"] += 1
-    bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد من {message.from_user.first_name}:\n{message.text}")
-    bot.send_message(message.chat.id, "✅ تم إرسال طلبك للإدارة بنجاح!")
-    start(message)
+        bot.edit_message_text("📝 أرسل اسم الأداة:", call.message.chat.id, call.message.message_id)
+        bot.register_next_step_handler(call.message, lambda m: [bot.send_message(MY_CHAT_ID, f"🔔 طلب جديد: {m.text}"), start(m)])
 
 print("System is running...")
 bot.infinity_polling()
