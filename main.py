@@ -4,6 +4,7 @@ from flask import Flask
 from threading import Thread
 import sqlite3
 from datetime import datetime, timedelta
+import os
 
 # 1. الإعدادات
 TOKEN = "8621204418:AAHkLlUefZTY8JaY4rFain_qqniwzBWRAmU"
@@ -24,11 +25,15 @@ cursor.execute("CREATE TABLE IF NOT EXISTS tool_usage (user_id INTEGER, tool_nam
 cursor.execute("CREATE TABLE IF NOT EXISTS requests (user_id INTEGER, request_text TEXT, timestamp TEXT)")
 conn.commit()
 
-# تشغيل سيرفر الويب
+# تشغيل سيرفر الويب (للتوافق مع Render)
 app = Flask(__name__)
 @app.route("/")
 def home(): return "HMAX System Active"
-Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
+
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+Thread(target=run_flask).start()
 
 DATA = {
     "tools": {
@@ -170,8 +175,8 @@ def daily_new_users(message):
         cursor.execute("SELECT id FROM users WHERE join_date = ?", (today,))
         new_users = cursor.fetchall()
         if new_users:
-            user_ids = [str(user[0]) for user in new_users]
-            bot.reply_to(message, f"🆕 **المستخدمون الجدد اليوم ({today}):**\n{\n.join(user_ids)}")
+            user_ids_str = "\n".join([str(user[0]) for user in new_users])
+            bot.reply_to(message, f"🆕 **المستخدمون الجدد اليوم ({today}):**\n{user_ids_str}")
         else:
             bot.reply_to(message, f"لا يوجد مستخدمون جدد اليوم ({today}).")
     else:
