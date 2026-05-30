@@ -9,15 +9,16 @@ MY_CHAT_ID = "560330933"
 CHANNEL_ID = "@haithamMax1"
 bot = telebot.TeleBot(TOKEN)
 
-# نظام إحصائيات داخلي
+# نظام إحصائيات داخلي (مدمج)
 stats = {"users": 0, "clicks": 0, "requests": 0, "blocked": 0}
 
-# تشغيل سيرفر الويب ليبقى البوت حياً
+# تشغيل سيرفر الويب لضمان بقاء البوت حياً 24/7
 app = Flask(__name__)
 @app.route('/')
 def home(): return "HMAX System is running!"
 Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
 
+# قاعدة بيانات الأدوات والتعاريف
 DATA = {
     "tools": {
         "tsm_pro": ("⚙️ TSM Tool Pro", "https://www.mediafire.com/file/vqh1h1uhwq9s2xo/TSM_SetupV2.4.1.7z/file"),
@@ -37,6 +38,7 @@ DATA = {
     }
 }
 
+# دالة التحقق من الاشتراك
 def is_subscribed(user_id):
     try: return bot.get_chat_member(CHANNEL_ID, user_id).status in ['member', 'administrator', 'creator']
     except: return False
